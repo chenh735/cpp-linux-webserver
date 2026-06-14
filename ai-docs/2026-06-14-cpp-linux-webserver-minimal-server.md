@@ -7,13 +7,14 @@ tags:
   - WebServer
   - Socket
   - HTTP
+  - 静态文件
 categories:
   - C++ WebServer
 ---
 
-这篇文章记录我从零实现一个 Linux C++ WebServer 的第一阶段：先写出一个最小可运行的 HTTP 服务器。
+这篇文章记录我从零实现一个 Linux C++ WebServer 的过程。当前已经完成第一阶段：先写出一个最小可运行的 HTTP 服务器。
 
-这个阶段的目标不是高性能，也不是完整复刻 TinyWebServer，而是先把最基础的网络请求链路跑通。
+这个阶段的目标不是高性能，也不是完整复刻 TinyWebServer，而是先把最基础的网络请求链路跑通，然后再逐步升级成静态文件服务器、`epoll` 服务器和多线程服务器。
 
 <!-- more -->
 
@@ -44,6 +45,7 @@ socket -> bind -> listen -> accept -> recv -> send -> close
 - 接收浏览器或 `curl` 发来的 HTTP 请求。
 - 打印请求内容。
 - 返回一个固定的 HTTP 响应。
+- 响应头中使用 `Connection: close`。
 - 请求处理完成后关闭客户端连接。
 - 对 `recv` 和 `send` 的返回值做了初步处理。
 
@@ -82,24 +84,132 @@ socket -> bind -> listen -> accept -> recv -> send -> close
 
 如果它已经被 Git 跟踪，即使 `.gitignore` 中写了 `server`，Git 仍然会继续跟踪它。需要先从索引中移除，再依赖 `.gitignore` 忽略。
 
-## 当前还存在的问题
+## 下一步：静态文件服务器
 
-当前版本还不是一个健壮的服务器，还有一些需要修复的地方：
+最小 HTTP 服务器已经完成了第一阶段目标：浏览器或 `curl` 可以连接服务器，服务器能够读取请求并返回固定的 `Hello World` 响应。
 
-- HTTP 响应头字段需要检查，避免拼写错误。
-- `recv` 失败时不应该直接退出整个服务器主循环。
-- `send == 0` 时的控制流还需要调整。
-- 客户端正常关闭连接时，不应该当作系统错误处理。
-- 源码中的中文错误提示存在编码显示问题。
+下一步不急着进入 `epoll` 和线程池，而是先把固定响应升级为静态文件响应。这样可以先理解 HTTP 请求路径、响应状态码、文件读取和安全路径处理。
 
-## 下一步计划
+## 为什么下一步做静态文件
 
-下一步不会马上进入线程池，而是继续打磨最小版本：
+当前服务器虽然能返回内容，但无论访问什么路径，响应都是固定的。
 
-1. 修复当前错误处理和响应头细节。
-2. 把连接处理逻辑提取成函数。
-3. 支持返回 `www/index.html` 静态文件。
-4. 解析最小 HTTP 请求行，只支持 `GET`。
-5. 再引入非阻塞 socket 和 `epoll`。
+这说明我们只验证了网络链路：
 
-这个节奏虽然慢一点，但每一步都能明确知道自己在解决什么问题。
+```text
+socket -> bind -> listen -> accept -> recv -> send -> close
+```
+
+但一个 WebServer 还需要根据请求内容做不同处理。静态文件服务器正好是下一阶段最合适的练习目标，因为它会引入三个核心问题：
+
+- 如何解析 HTTP 请求行。
+- 如何把 URL 路径映射成本地文件路径。
+- 如何根据处理结果返回不同 HTTP 状态码。
+
+## 静态文件阶段的目标效果
+
+下一阶段希望实现这些行为：
+
+```text
+GET / HTTP/1.1               -> 返回 www/index.html
+GET /index.html HTTP/1.1     -> 返回 www/index.html
+GET /not-found.html HTTP/1.1 -> 返回 404 Not Found
+POST / HTTP/1.1              -> 返回 405 Method Not Allowed
+错误请求行                    -> 返回 400 Bad Request
+```
+
+这个阶段仍然使用阻塞 IO。重点不是并发性能，而是把 HTTP 处理流程走通。
+
+## 请求处理流程
+
+可以先按照这个顺序设计：
+
+```text
+读取请求
+解析请求行
+校验 method/path/version
+把 path 转换成本地文件路径
+读取文件
+构造 HTTP 响应
+发送响应
+关闭连接
+```
+
+其中最关键的是请求行。
+
+一个典型请求行长这样：
+
+```text
+GET /index.html HTTP/1.1
+```
+
+它可以拆成三个字段：
+
+- `method`：请求方法，例如 `GET`。
+- `path`：请求路径，例如 `/index.html`。
+- `version`：HTTP 版本，例如 `HTTP/1.1`。
+
+## 路径映射
+
+服务器不能直接相信客户端传来的路径。
+
+例如客户端请求：
+
+```text
+GET /../README.md HTTP/1.1
+```
+
+如果直接拼接路径，就可能读取到 `www/` 目录之外的文件。这就是目录穿越问题。
+
+学习阶段可以先采用简单规则：
+
+- `/` 映射为 `www/index.html`。
+- 路径中包含 `..` 直接返回 `400 Bad Request`。
+- 所有文件都只能从 `www/` 目录读取。
+
+## 响应状态码
+
+下一阶段至少需要处理四类响应：
+
+- `200 OK`：文件存在并成功读取。
+- `400 Bad Request`：请求行格式不合法，或者路径不安全。
+- `404 Not Found`：文件不存在。
+- `405 Method Not Allowed`：请求方法不是 `GET`。
+
+响应格式仍然保持简单：
+
+```text
+HTTP/1.1 200 OK
+Content-Type: text/html
+Content-Length: ...
+Connection: close
+
+文件内容
+```
+
+## 暂时不做的事
+
+为了保持阶段目标清晰，下面这些内容先不做：
+
+- 非阻塞 socket。
+- `epoll`。
+- 线程池。
+- Keep-Alive。
+- 大文件传输优化。
+- 完整 MIME 类型识别。
+- 完整 HTTP Header 解析。
+
+这些内容后面都很重要，但现在提前加入会分散注意力。
+
+## 完成标准
+
+这个阶段完成后，服务器应该能通过这些测试：
+
+```bash
+curl -v http://127.0.0.1:8080/
+curl -v http://127.0.0.1:8080/index.html
+curl -v http://127.0.0.1:8080/not-found.html
+curl -X POST -v http://127.0.0.1:8080/
+```
+
+如果这些测试能得到预期状态码和响应内容，就可以进入下一阶段：非阻塞 socket 和 `epoll`。
