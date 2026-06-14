@@ -37,7 +37,7 @@ int main(int argc, char* argv[]){
     
     sockaddr_in in_addr{};
     in_addr.sin_family = AF_INET;
-    in_addr.sin_port = htons(8080);
+    in_addr.sin_port = htons(static_cast<uint16_t>(port));
     in_addr.sin_addr.s_addr = INADDR_ANY;
 
     if(-1 == bind(fd, (sockaddr*)(&in_addr), sizeof(in_addr))){
