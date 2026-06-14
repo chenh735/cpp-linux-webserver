@@ -17,7 +17,7 @@ int main(int argc, char* argv[]){
         port = strtol(argv[1], &end, 0);
         if(errno !=0 || *end != '\0' || port < 0 || port > 65535){
             perror("port 格式错误\n");
-            return;
+            return 1;
         }
     }
 
@@ -29,10 +29,10 @@ int main(int argc, char* argv[]){
     }
 
     int opt = 1;
-    if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt) == -1)){
+    if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1){
         close(fd);
         perror("setsockopt 失败\n");
-        return;
+        return 1;
     }
     
     sockaddr_in in_addr{};
