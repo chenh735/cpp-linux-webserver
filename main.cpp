@@ -15,8 +15,8 @@ int main(int argc, char* argv[]){
         errno = 0;
         char* end = nullptr;
         port = strtol(argv[1], &end, 0);
-        if(errno !=0 || *end != '\0' || port < 0 || port > 65535){
-            perror("port 格式错误\n");
+        if(errno !=0 || *end != '\0' || port <= 0 || port > 65535){
+            perror("port 格式错误");
             return 1;
         }
     }
@@ -24,14 +24,14 @@ int main(int argc, char* argv[]){
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if(-1 == fd){
-        perror("socket 创建失败\n");
+        perror("socket 创建失败");
         return 1;
     }
 
     int opt = 1;
     if(setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) == -1){
         close(fd);
-        perror("setsockopt 失败\n");
+        perror("setsockopt 失败");
         return 1;
     }
     
@@ -41,13 +41,13 @@ int main(int argc, char* argv[]){
     in_addr.sin_addr.s_addr = INADDR_ANY;
 
     if(-1 == bind(fd, (sockaddr*)(&in_addr), sizeof(in_addr))){
-        perror("bind 创建失败\n");
+        perror("bind 创建失败");
         close(fd);
         return -1;
     }
 
     if(-1 == listen(fd, SOMAXCONN)){
-        perror("listen 失败\n");
+        perror("listen 失败");
         close(fd);
         return -1;
     }
@@ -64,12 +64,12 @@ int main(int argc, char* argv[]){
         ssize_t n = recv(client_fd, buf, sizeof(buf) - 1, 0);
         if(n == -1){
             close(client_fd);
-            perror("revc 错误\n");
-            break;
+            perror("revc 错误");
+            continue;
         }
         if(n == 0){
             close(client_fd);
-            perror("客户端关闭连接\n");
+            std::cout << "客户端关闭连接" << std::endl;
             continue;
         }
         if(n > 0){
@@ -81,7 +81,7 @@ int main(int argc, char* argv[]){
             "HTTP/1.1 200 OK\r\n"
             "Content-Type: text/plain\r\n"
             "Content-Length: 12\r\n"
-            "Connect: close\r\n"
+            "Connection: close\r\n"
             "\r\n"
             "Hello World\n";
         
@@ -96,8 +96,8 @@ int main(int argc, char* argv[]){
             }
             if(n == 0){
                 close(client_fd);
-                perror("客户端关闭连接");
-                continue;
+                std::cout << "客户端关闭连接" << std::endl;
+                break;
             }
             send_total += n;
         }
