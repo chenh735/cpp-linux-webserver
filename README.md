@@ -6,7 +6,7 @@
 
 ## 当前进度
 
-当前已经完成第一阶段：最小 HTTP 服务器。
+当前已经从“固定返回 Hello World”的最小服务器，推进到 HTTP/1.1 请求解析和响应构造阶段。
 
 已完成能力：
 
@@ -14,11 +14,14 @@
 - 绑定本地端口并监听连接。
 - 支持通过命令行指定端口，例如 `./server 8080`。
 - 使用 `SO_REUSEADDR`，便于开发时快速重启。
-- 接收客户端 HTTP 请求并打印到终端。
-- 返回固定 HTTP 响应：`Hello World`。
-- 响应头中明确使用 `Connection: close`。
+- 接收客户端 HTTP 请求。
+- 初步解析 HTTP/1.1 请求行、Header 和可选 body。
+- 使用 `HttpRequest` 保存 method、path、version、header、query 和 body。
+- 使用 `HttpResponse` 构造 HTTP 响应字符串。
+- 已添加 `static/` 静态页面目录。
+- 支持返回 `index.html`、`400BadRequest.html`、`405MethodNotAllowed.html` 等错误页面。
+- 响应头中使用 `Connection: close`。
 - 请求处理结束后关闭客户端连接。
-- 对 `recv` 和 `send` 做了基础分支处理。
 
 ## 构建与运行
 
@@ -38,50 +41,64 @@ http://127.0.0.1:8080
 使用 `curl` 查看响应：
 
 ```bash
-curl -v http://127.0.0.1:8080
+curl -v http://127.0.0.1:8080/
+```
+
+## 当前目录
+
+```text
+.
+├── main.cpp
+├── Makefile
+├── http-1.1/
+│   ├── request.hpp
+│   ├── request.cpp
+│   ├── response.hpp
+│   └── response.cpp
+├── static/
+│   ├── index.html
+│   ├── 400BadRequest.html
+│   ├── 404NotFound.html
+│   └── 405MethodNotAllowed.html
+└── ai-docs/
 ```
 
 ## 当前阶段边界
 
-第一阶段只验证最基础的请求链路：
+当前版本仍然是学习阶段实现，还有这些限制：
 
-```text
-socket -> bind -> listen -> accept -> recv -> send -> close
-```
-
-暂时还没有处理这些内容：
-
-- 不解析 HTTP 请求行和请求头。
-- 不根据 URL 路径返回不同内容。
-- 不读取静态文件。
-- 不支持非阻塞 IO。
-- 不使用 `epoll`。
-- 不处理并发连接。
+- 仍然是阻塞式 `accept/recv/send` 流程。
+- 一次只顺序处理一个连接。
+- 请求读取只调用一次 `recv`，还没有处理完整的请求缓冲。
+- 静态文件路径映射还不完整。
+- 还没有真正支持任意静态文件和 `404 Not Found`。
+- HTTP 解析器仍需要修复 Header、query、body 等边界问题。
+- 还没有使用非阻塞 socket 和 `epoll`。
 
 ## 下一阶段目标
 
-下一阶段进入“静态文件服务器”：
+下一阶段重点是稳定 HTTP/1.1 解析和静态文件返回：
 
-- 新增 `www/index.html` 作为默认页面。
-- 解析最小 HTTP 请求行，例如 `GET /index.html HTTP/1.1`。
-- 支持访问 `/` 时返回 `/index.html`。
-- 根据请求路径读取 `www/` 目录下的文件。
-- 文件存在时返回 `200 OK`。
-- 文件不存在时返回 `404 Not Found`。
-- 非 `GET` 请求暂时返回 `405 Method Not Allowed`。
-- 非法请求行返回 `400 Bad Request`。
-
-这个阶段仍然先使用阻塞 IO，不急着引入 `epoll`。目标是先把 HTTP 请求解析、文件路径处理和响应构造这三件事理解清楚。
+- 修复当前 HTTP 解析和响应构造中的 bug。
+- 完成 `/`、`/index.html`、不存在文件、非法请求、非 GET 请求的完整返回逻辑。
+- 把重复的“读取页面 + 构造响应”逻辑提取为辅助函数。
+- 整理 `request.hpp/response.hpp` 的头文件结构，避免后续多源文件链接问题。
+- 调整 Makefile，只编译 `.cpp` 文件，不把 `.hpp` 当作编译单元。
 
 ## 后续路线
 
-完成静态文件服务器后，再进入：
+参考 TinyWebServer 的学习路线，后续按这个顺序推进：
 
-- 抽取 `handle_client`、`create_listen_socket` 等函数。
-- 引入非阻塞 socket。
-- 使用 `epoll` 管理监听 socket 和客户端 socket。
-- 拆分 `Server`、`HttpConnection`、`Buffer`、`HttpRequest`、`HttpResponse` 等模块。
-- 最后再考虑线程池、定时器和日志系统。
+1. 稳定 HTTP 请求解析和静态资源返回。
+2. 抽取 `Server`、`HttpConnection`、`HttpRequest`、`HttpResponse` 等模块。
+3. 引入非阻塞 socket。
+4. 使用 `epoll` 管理监听 socket 和客户端 socket。
+5. 增加定时器，关闭超时空闲连接。
+6. 增加日志系统。
+7. 增加线程池。
+8. 最后再考虑压测和更完整的 HTTP 功能。
+
+TinyWebServer 参考仓库：https://github.com/qinguoyi/TinyWebServer
 
 ## 学习方式
 
@@ -91,5 +108,3 @@ socket -> bind -> listen -> accept -> recv -> send -> close
 2. 自己写第一版代码。
 3. 使用 AI 检查 bug、边界情况和优化方向。
 4. 将每轮问题整理到 `ai-docs/todo.md`。
-
-参考方向：TinyWebServer、Linux 高性能服务器编程、UNIX 网络编程。

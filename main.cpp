@@ -5,7 +5,6 @@
 #include <cstring>
 #include <stdlib.h>
 #include <errno.h>
-#include <iostream>
 #include <sstream>
 #include <fstream>
 #include "http-1.1/response.hpp"
@@ -73,12 +72,10 @@ int main(int argc, char* argv[]){
         }
         if(n == 0){
             close(client_fd);
-            std::cout << "客户端关闭连接" << std::endl;
             continue;
         }
         if(n > 0){
             buf[n] = '\0';
-            std::cout << buf << std::endl;
         }
 
         const std::string raw(buf, n);
@@ -86,7 +83,6 @@ int main(int argc, char* argv[]){
         ParseResult result = parse_http_request(raw, request);
         std::string path_prefix = "static/";
         HttpResponse resp;
-        std::cout << result.message << std::endl;
         switch (result.type)
         {
         case ParseErrorType::NoError:{
@@ -179,13 +175,6 @@ int main(int argc, char* argv[]){
         }
         std::string r = resp.builder();
         const char* response = r.data();
-        std::cout << request.method << std::endl;
-        std::cout << request.path << std::endl;
-        std::cout << request.version << std::endl;
-        // std::cout << resp.header << std::endl;
-        std::cout << request.body << std::endl;
-        
-        // std::cout << response << std::endl;
         ssize_t total = strlen(response);
         ssize_t send_total = 0;
         while(send_total < total){
@@ -197,7 +186,6 @@ int main(int argc, char* argv[]){
             }
             if(n == 0){
                 close(client_fd);
-                std::cout << "客户端关闭连接" << std::endl;
                 break;
             }
             send_total += n;
@@ -206,7 +194,6 @@ int main(int argc, char* argv[]){
     }
     
     close(fd);
-    std::cout << "success" << std::endl;
 
     return 0;
 }
