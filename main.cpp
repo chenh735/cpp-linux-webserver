@@ -6,6 +6,10 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <iostream>
+#include <sstream>
+#include <fstream>
+#include "http-1.1/response.hpp"
+#include "http-1.1/request.hpp"
 
 
 
@@ -77,14 +81,111 @@ int main(int argc, char* argv[]){
             std::cout << buf << std::endl;
         }
 
-        const char* response = 
-            "HTTP/1.1 200 OK\r\n"
-            "Content-Type: text/plain\r\n"
-            "Content-Length: 12\r\n"
-            "Connection: close\r\n"
-            "\r\n"
-            "Hello World\n";
+        const std::string raw(buf, n);
+        HttpRequest request;
+        ParseResult result = parse_http_request(raw, request);
+        std::string path_prefix = "static/";
+        HttpResponse resp;
+        std::cout << result.message << std::endl;
+        switch (result.type)
+        {
+        case ParseErrorType::NoError:{
+            if(request.path == "/"){
+                request.path = "/index";
+            }
+            if(request.path == "/index"){
+                std::string path = path_prefix + "index.html";
+                std::ifstream file(path, std::ios::binary);
+                if(!file.is_open()){
+                    perror((path + "文件不能打开").c_str());
+                    close(client_fd);
+                    continue;
+                }
+                std::stringstream buf;
+                buf << file.rdbuf();
+                std::string body = buf.str();
+                std::unordered_map<std::string, std::string> header;
+                header["Content-Length"] = std::to_string(body.size());
+                header["Connection"] = "close";
+                header["Content-Type"] = "text/html; charset=utf-8";
+                resp.body = body;
+                resp.status = 200;
+                resp.message = status_to_msg[resp.status];
+                resp.header = header;
+            }else{
+                std::string path = path + "/400BadRequest.html";
+                std::ifstream file(path, std::ios::binary);
+                if(!file.is_open()){
+                    perror((path + "文件不能打开").c_str());
+                    close(client_fd);
+                    continue;
+                }
+                std::stringstream buf;
+                buf << file.rdbuf();
+                std::string body = buf.str();
+                std::unordered_map<std::string, std::string> header;
+                header["Content-Length"] = std::to_string(body.size());
+                header["Connection"] = "close";
+                header["Content-Type"] = "text/html; charset=utf-8";
+                resp.body = body;
+                resp.status = 400;
+                resp.message = status_to_msg[resp.status];
+                resp.header = header;
+            }
+            break;
+        }
+        case ParseErrorType::UnsupportedMethod:{
+            std::string path = path_prefix + "/405MethodNotAllowed.html";
+            std::ifstream file(path, std::ios::binary);
+            if(!file.is_open()){
+                perror((path + "文件不能打开").c_str());
+                close(client_fd);
+                continue;
+            }
+            std::stringstream buf;
+            buf << file.rdbuf();
+            std::string body = buf.str();
+            std::unordered_map<std::string, std::string> header;
+            header["Content-Length"] = std::to_string(body.size());
+            header["Connection"] = "close";
+            header["Content-Type"] = "text/html; charset=utf-8";
+            resp.body = body;
+            resp.status = 405;
+            resp.message = status_to_msg[resp.status];
+            resp.header = header;
+            break;
+        }
+        default:{
+            std::string path = path_prefix + "/400BadRequest.html";
+            std::ifstream file(path, std::ios::binary);
+            if(!file.is_open()){
+                perror((path + "文件不能打开").c_str());
+                close(client_fd);
+                continue;
+            }
+            std::stringstream buf;
+            buf << file.rdbuf();
+            std::string body = buf.str();
+            std::unordered_map<std::string, std::string> header;
+            header["Content-Length"] = std::to_string(body.size());
+            header["Connection"] = "close";
+            header["Content-Type"] = "text/html; charset=utf-8";
+            resp.body = body;
+            resp.status = 400;
+            resp.message = status_to_msg[resp.status];
+            resp.header = header;
+            break;
+        }
+        }
+        std::string r = resp.builder();
+        const char* response = r.data();
+        std::cout << request.method << std::endl;
+        std::cout << request.path << std::endl;
+        std::cout << request.version << std::endl;
+        // std::cout << resp.header << std::endl;
+        std::cout << request.body << std::endl;
         
+        // std::cout << response << std::endl;
         ssize_t total = strlen(response);
         ssize_t send_total = 0;
         while(send_total < total){

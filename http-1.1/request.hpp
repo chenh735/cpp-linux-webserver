@@ -3,6 +3,7 @@
 #include <functional>
 #include <algorithm>
 #include <cctype>
+#include <iostream>
 #include <cerrno>
 
 
@@ -85,7 +86,7 @@ bool parse_path(const std::string& path, HttpRequest& request){
             }
 
             std::string value = query.substr(mid + 1, end - mid);
-            request.query.insert(key, value);
+            request.query.emplace(key, value);
             start = end + 1;
             end = query.find('=', start);
             if(end == npos){
@@ -96,13 +97,14 @@ bool parse_path(const std::string& path, HttpRequest& request){
             }
         }
     }
-
+    return true;
 }
 
-bool parse_version(const std::string verison, HttpRequest& request){
+bool parse_version(const std::string& verison, HttpRequest& request){
     if(verison != "HTTP/1.1"){
         return false;
     }
+    return true;
 }
 
 ParseResult handler_get(const std::string raw, HttpRequest& request){
@@ -112,10 +114,13 @@ ParseResult handler_get(const std::string raw, HttpRequest& request){
     }
 
     std::size_t pos = raw.find("\r\n", 0);
-    const std::string line = raw.substr(pos);
-    std::size_t line_pos = line.find(" ");
+    const std::string line = raw.substr(0, pos);
+    std::size_t line_pos = line.find(' ');
+    std::cout << line << std::endl;
+    std::cout << line_pos << std::endl;
+    std::cout << line.size() << std::endl;
     if(line_pos == std::string::npos || line_pos + 1 >= line.size() || line[line_pos + 1] != '/'){
-        return {ParseStatus::Error, ParseErrorType::InvalidHeader, "无效请求行"};
+        return {ParseStatus::Error, ParseErrorType::InvalidHeader, "无效请求行1"};
     }
 
     request.method = line.substr(0, line_pos);
@@ -123,12 +128,14 @@ ParseResult handler_get(const std::string raw, HttpRequest& request){
         return {ParseStatus::Error, ParseErrorType::UnsupportedMethod, "使用方法不支持"};
     }
     line_pos++;
-    std::size_t line_pos1 = line.find(" ");
+    std::size_t line_pos1 = line.find(' ', line_pos);
+    std::cout << line_pos1 << std::endl;
     if(line_pos1 == std::string::npos || line_pos1 + 1 >= line.size() || line[line_pos1 + 1] != 'H'){
-        return {ParseStatus::Error, ParseErrorType::InvalidHeader, "无效请求行"};
+        return {ParseStatus::Error, ParseErrorType::InvalidHeader, "无效请求行2"};
     }
 
-    const std::string path = line.substr(line_pos1 - line_pos, line_pos);
+    const std::string path = line.substr(line_pos, line_pos1 - line_pos);
+    std::cout << path << std::endl;
     if(!parse_path(path, request)){
         return {ParseStatus::Error, ParseErrorType::InvalidPath, "请求路径不合规" };
     }
@@ -141,13 +148,19 @@ ParseResult handler_get(const std::string raw, HttpRequest& request){
     std::size_t start = pos + 2;
     for(std::size_t end = raw.find("\r\n", start); end - 1 < header_end; start = end + 2, end = raw.find("\r\n", start)){
         const std::string line = raw.substr(start, end - start);
+        std::cout << "line:" <<  line << std::endl;
         std::size_t mid = line.find(':');
+        std::cout << "mid:" <<  mid << std::endl;
+        
         if(mid == std::string::npos){
             return {ParseStatus::Error, ParseErrorType::InvalidHeader, "请求头格错误，缺少冒号分割"};
         }
-        std::string name = raw.substr(start, mid - start);
+        std::string name = line.substr(0, mid);
         if(name.find('\r') != std::string::npos || 
         name.find('\n') != std::string::npos || name.find(' ') != std::string::npos){
+            std::cout <<"name:" << name << std::endl;
+            std::cout << start << std::endl;
+            std::cout << mid << std::endl;
             return {ParseStatus::Error, ParseErrorType::InvalidHeader, "name 中包含特殊字符"};
         }
         mid++;
@@ -156,7 +169,7 @@ ParseResult handler_get(const std::string raw, HttpRequest& request){
         }
         const std::string value = raw.substr(mid,  end - start);
         to_lower(name);
-        request.header.insert(name, value);
+        request.header.emplace(name, value);
     }
     if(request.header.find("host") == request.header.end()){
         return {ParseStatus::Error, ParseErrorType::InvalidHeader, "请求头没有包含 host 信息"};
@@ -187,18 +200,24 @@ std::unordered_map<std::string, handler> handlers = {
 };
 
 ParseResult parse_http_request(const std::string& raw, HttpRequest& request){
+    if(raw.find("\r\n\r\n") == std::string::npos){
+        return {ParseStatus::Incompleted, ParseErrorType::NoError, "请求不完整"};
+    }
     std::string method = "";
     for(std::size_t i = 0;i < raw.size();i++){
         if(raw[i] == ' '){
             method = raw.substr(0, i);
+            break;
         }else if(i > 6){
             break;
         }
     }
+    std::cout << method << std::endl;
     auto it = handlers.find(method);
     if(it == handlers.end()){
         return {ParseStatus::Error, ParseErrorType::UnsupportedMethod, "暂不支持" + method + "方法"};
     }
+    std::cout << "in" << std::endl;
     return it->second(raw, request);
 }
 
