@@ -11,6 +11,143 @@
 #include "http-1.1/request.hpp"
 
 
+// 读取本地文件内容到字符串中。
+bool read_file(const std::string& path, std::string& body){
+    std::ifstream file(path, std::ios::binary);
+    if(!file.is_open()){
+        return false;
+    }
+
+    std::stringstream buf;
+    buf << file.rdbuf();
+    body = buf.str();
+    return true;
+}
+
+// 根据状态码和 HTML 文件构造完整 HTTP 响应。
+bool build_html_response(int status, const std::string& file_path, HttpResponse& resp){
+    std::string body;
+    if(!read_file(file_path, body)){
+        return false;
+    }
+
+    std::unordered_map<std::string, std::string> header;
+    header["Content-Length"] = std::to_string(body.size());
+    header["Connection"] = "close";
+    header["Content-Type"] = "text/html; charset=utf-8";
+    resp.body = body;
+    resp.status = status;
+    resp.message = status_to_msg[resp.status];
+    resp.header = header;
+    return true;
+}
+
+// 循环发送响应，直到全部内容写入 socket。
+bool send_all(int client_fd, const std::string& response){
+    const char* data = response.data();
+    ssize_t total = response.size();
+    ssize_t send_total = 0;
+    while(send_total < total){
+        ssize_t n = send(client_fd, (void*)(data + send_total), total - send_total, 0);
+        if(n == -1){
+            perror("send 失败");
+            return false;
+        }
+        if(n == 0){
+            return false;
+        }
+        send_total += n;
+    }
+    return true;
+}
+
+// 处理单个客户端连接的完整请求响应流程。
+void handle_client(int client_fd){
+    char buf[1024];
+    ssize_t n = recv(client_fd, buf, sizeof(buf) - 1, 0);
+    if(n == -1){
+        perror("revc 错误");
+        return;
+    }
+    if(n == 0){
+        return;
+    }
+    if(n > 0){
+        buf[n] = '\0';
+    }
+
+    const std::string raw(buf, n);
+    HttpRequest request;
+    ParseResult result = parse_http_request(raw, request);
+    std::string path_prefix = "static/";
+    HttpResponse resp;
+    // 根据解析状态区分成功、请求不完整和解析错误。
+    switch (result.status)
+    {
+    case ParseStatus::Completed:{
+        if(result.type == ParseErrorType::NoError){
+            if(request.path == "/"){
+                request.path = "/index";
+            }
+            if(request.path == "/index" || request.path == "/index.html"){
+                std::string path = path_prefix + "index.html";
+                if(!build_html_response(200, path, resp)){
+                    perror((path + "文件不能打开").c_str());
+                    return;
+                }
+            }else{
+                std::string path = path_prefix + "/400BadRequest.html";
+                if(!build_html_response(400, path, resp)){
+                    perror((path + "文件不能打开").c_str());
+                    return;
+                }
+            }
+        }else{
+            std::string path = path_prefix + "/400BadRequest.html";
+            if(!build_html_response(400, path, resp)){
+                perror((path + "文件不能打开").c_str());
+                return;
+            }
+        }
+        break;
+    }
+    case ParseStatus::Incompleted:{
+        std::string path = path_prefix + "/400BadRequest.html";
+        if(!build_html_response(400, path, resp)){
+            perror((path + "文件不能打开").c_str());
+            return;
+        }
+        break;
+    }
+    case ParseStatus::Error:{
+        if(result.type == ParseErrorType::UnsupportedMethod){
+            std::string path = path_prefix + "/405MethodNotAllowed.html";
+            if(!build_html_response(405, path, resp)){
+                perror((path + "文件不能打开").c_str());
+                return;
+            }
+        }else{
+            std::string path = path_prefix + "/400BadRequest.html";
+            if(!build_html_response(400, path, resp)){
+                perror((path + "文件不能打开").c_str());
+                return;
+            }
+        }
+        break;
+    }
+    default:{
+        std::string path = path_prefix + "/400BadRequest.html";
+        if(!build_html_response(400, path, resp)){
+            perror((path + "文件不能打开").c_str());
+            return;
+        }
+        break;
+    }
+    }
+    std::string r = resp.builder();
+    send_all(client_fd, r);
+}
+
 
 int main(int argc, char* argv[]){
     long port = 8080;
@@ -63,195 +200,7 @@ int main(int argc, char* argv[]){
             continue;
         }
 
-        char buf[1024];
-        ssize_t n = recv(client_fd, buf, sizeof(buf) - 1, 0);
-        if(n == -1){
-            close(client_fd);
-            perror("revc 错误");
-            continue;
-        }
-        if(n == 0){
-            close(client_fd);
-            continue;
-        }
-        if(n > 0){
-            buf[n] = '\0';
-        }
-
-        const std::string raw(buf, n);
-        HttpRequest request;
-        ParseResult result = parse_http_request(raw, request);
-        std::string path_prefix = "static/";
-        HttpResponse resp;
-        // 根据解析状态区分成功、请求不完整和解析错误。
-        switch (result.status)
-        {
-        case ParseStatus::Completed:{
-            if(result.type == ParseErrorType::NoError){
-                if(request.path == "/"){
-                    request.path = "/index";
-                }
-                if(request.path == "/index"){
-                    std::string path = path_prefix + "index.html";
-                    std::ifstream file(path, std::ios::binary);
-                    if(!file.is_open()){
-                        perror((path + "文件不能打开").c_str());
-                        close(client_fd);
-                        continue;
-                    }
-                    std::stringstream buf;
-                    buf << file.rdbuf();
-                    std::string body = buf.str();
-                    std::unordered_map<std::string, std::string> header;
-                    header["Content-Length"] = std::to_string(body.size());
-                    header["Connection"] = "close";
-                    header["Content-Type"] = "text/html; charset=utf-8";
-                    resp.body = body;
-                    resp.status = 200;
-                    resp.message = status_to_msg[resp.status];
-                    resp.header = header;
-                }else{
-                    std::string path = path_prefix + "/400BadRequest.html";
-                    std::ifstream file(path, std::ios::binary);
-                    if(!file.is_open()){
-                        perror((path + "文件不能打开").c_str());
-                        close(client_fd);
-                        continue;
-                    }
-                    std::stringstream buf;
-                    buf << file.rdbuf();
-                    std::string body = buf.str();
-                    std::unordered_map<std::string, std::string> header;
-                    header["Content-Length"] = std::to_string(body.size());
-                    header["Connection"] = "close";
-                    header["Content-Type"] = "text/html; charset=utf-8";
-                    resp.body = body;
-                    resp.status = 400;
-                    resp.message = status_to_msg[resp.status];
-                    resp.header = header;
-                }
-            }else{
-                std::string path = path_prefix + "/400BadRequest.html";
-                std::ifstream file(path, std::ios::binary);
-                if(!file.is_open()){
-                    perror((path + "文件不能打开").c_str());
-                    close(client_fd);
-                    continue;
-                }
-                std::stringstream buf;
-                buf << file.rdbuf();
-                std::string body = buf.str();
-                std::unordered_map<std::string, std::string> header;
-                header["Content-Length"] = std::to_string(body.size());
-                header["Connection"] = "close";
-                header["Content-Type"] = "text/html; charset=utf-8";
-                resp.body = body;
-                resp.status = 400;
-                resp.message = status_to_msg[resp.status];
-                resp.header = header;
-            }
-            break;
-        }
-        case ParseStatus::Incompleted:{
-            std::string path = path_prefix + "/400BadRequest.html";
-            std::ifstream file(path, std::ios::binary);
-            if(!file.is_open()){
-                perror((path + "文件不能打开").c_str());
-                close(client_fd);
-                continue;
-            }
-            std::stringstream buf;
-            buf << file.rdbuf();
-            std::string body = buf.str();
-            std::unordered_map<std::string, std::string> header;
-            header["Content-Length"] = std::to_string(body.size());
-            header["Connection"] = "close";
-            header["Content-Type"] = "text/html; charset=utf-8";
-            resp.body = body;
-            resp.status = 400;
-            resp.message = status_to_msg[resp.status];
-            resp.header = header;
-            break;
-        }
-        case ParseStatus::Error:{
-            if(result.type == ParseErrorType::UnsupportedMethod){
-                std::string path = path_prefix + "/405MethodNotAllowed.html";
-                std::ifstream file(path, std::ios::binary);
-                if(!file.is_open()){
-                    perror((path + "文件不能打开").c_str());
-                    close(client_fd);
-                    continue;
-                }
-                std::stringstream buf;
-                buf << file.rdbuf();
-                std::string body = buf.str();
-                std::unordered_map<std::string, std::string> header;
-                header["Content-Length"] = std::to_string(body.size());
-                header["Connection"] = "close";
-                header["Content-Type"] = "text/html; charset=utf-8";
-                resp.body = body;
-                resp.status = 405;
-                resp.message = status_to_msg[resp.status];
-                resp.header = header;
-            }else{
-                std::string path = path_prefix + "/400BadRequest.html";
-                std::ifstream file(path, std::ios::binary);
-                if(!file.is_open()){
-                    perror((path + "文件不能打开").c_str());
-                    close(client_fd);
-                    continue;
-                }
-                std::stringstream buf;
-                buf << file.rdbuf();
-                std::string body = buf.str();
-                std::unordered_map<std::string, std::string> header;
-                header["Content-Length"] = std::to_string(body.size());
-                header["Connection"] = "close";
-                header["Content-Type"] = "text/html; charset=utf-8";
-                resp.body = body;
-                resp.status = 400;
-                resp.message = status_to_msg[resp.status];
-                resp.header = header;
-            }
-            break;
-        }
-        default:{
-            std::string path = path_prefix + "/400BadRequest.html";
-            std::ifstream file(path, std::ios::binary);
-            if(!file.is_open()){
-                perror((path + "文件不能打开").c_str());
-                close(client_fd);
-                continue;
-            }
-            std::stringstream buf;
-            buf << file.rdbuf();
-            std::string body = buf.str();
-            std::unordered_map<std::string, std::string> header;
-            header["Content-Length"] = std::to_string(body.size());
-            header["Connection"] = "close";
-            header["Content-Type"] = "text/html; charset=utf-8";
-            resp.body = body;
-            resp.status = 400;
-            resp.message = status_to_msg[resp.status];
-            resp.header = header;
-            break;
-        }
-        }
-        std::string r = resp.builder();
-        const char* response = r.data();
-        ssize_t total = r.size();
-        ssize_t send_total = 0;
-        while(send_total < total){
-            ssize_t n = send(client_fd, (void*)(response + send_total), total - send_total, 0);
-            if(n == -1){
-                perror("send 失败");
-                break;
-            }
-            if(n == 0){
-                break;
-            }
-            send_total += n;
-        }
+        handle_client(client_fd);
         close(client_fd);
     }
     
