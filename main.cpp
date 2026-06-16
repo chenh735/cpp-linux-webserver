@@ -109,7 +109,7 @@ int main(int argc, char* argv[]){
                 resp.message = status_to_msg[resp.status];
                 resp.header = header;
             }else{
-                std::string path = path + "/400BadRequest.html";
+                std::string path = path_prefix + "/400BadRequest.html";
                 std::ifstream file(path, std::ios::binary);
                 if(!file.is_open()){
                     perror((path + "文件不能打开").c_str());
@@ -175,7 +175,7 @@ int main(int argc, char* argv[]){
         }
         std::string r = resp.builder();
         const char* response = r.data();
-        ssize_t total = strlen(response);
+        ssize_t total = r.size();
         ssize_t send_total = 0;
         while(send_total < total){
             ssize_t n = send(client_fd, (void*)(response + send_total), total - send_total, 0);

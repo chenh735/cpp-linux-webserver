@@ -58,7 +58,7 @@ bool parse_path(const std::string& path, HttpRequest& request){
     || path.find('\r') != npos || path.find('\n') != npos ){
         return false;
     }
-    request.path = path;
+    request.path = path.substr(0, pos);
     if(pos != npos){
         std::string query = path.substr(pos + 1);
         if(query.size() > 2048 || query.find(' ') != npos || query.find('\r') != npos
@@ -153,10 +153,10 @@ ParseResult handler_get(const std::string raw, HttpRequest& request){
             return {ParseStatus::Error, ParseErrorType::InvalidHeader, "name 中包含特殊字符"};
         }
         mid++;
-        while(mid < end && raw[mid] == ' '){
+        while(mid < end && line[mid] == ' '){
             mid++;
         }
-        const std::string value = raw.substr(mid,  end - start);
+        const std::string value = line.substr(mid);
         to_lower(name);
         request.header.emplace(name, value);
     }
