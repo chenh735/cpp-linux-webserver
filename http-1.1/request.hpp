@@ -175,11 +175,10 @@ ParseResult handler_get(const std::string raw, HttpRequest& request){
             return {ParseStatus::Error, ParseErrorType::InvalidHeader, "请求头中content-length格式错误"};
         }
         std::size_t body_start = header_end + 4;
-        std::size_t body_end = raw.size() - 2;
-        if(body_end - body_start < length){
+        if(raw.size() - body_start < length){
             return {ParseStatus::Incompleted, ParseErrorType::NoError, "GET 请求体不完整"};
         }
-        request.body = raw.substr(body_start, body_end - body_start);
+        request.body = raw.substr(body_start, length);
     }
     return {ParseStatus::Completed, ParseErrorType::NoError, "Success"};
 }

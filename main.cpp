@@ -245,11 +245,9 @@ int main(int argc, char* argv[]){
             ssize_t n = send(client_fd, (void*)(response + send_total), total - send_total, 0);
             if(n == -1){
                 perror("send 失败");
-                close(client_fd);
                 break;
             }
             if(n == 0){
-                close(client_fd);
                 break;
             }
             send_total += n;
