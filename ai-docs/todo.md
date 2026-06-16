@@ -18,44 +18,44 @@
 
 ## 优先修复
 
-- [ ] 修复非 `/index` 路径分支的文件路径构造。
+- [o] 修复非 `/index` 路径分支的文件路径构造。
   - 位置：`main.cpp` 中 `std::string path = path + "/400BadRequest.html";`
   - 问题：局部变量在初始化时引用自身，逻辑错误。
   - 建议：如果请求文件不存在，应返回 `static/404NotFound.html`，不是 `400BadRequest.html`。
 
-- [ ] 区分 `ParseStatus` 和 `ParseErrorType`。
+- [o] 区分 `ParseStatus` 和 `ParseErrorType`。
   - 位置：`main.cpp` 中 `switch (result.type)`。
   - 问题：当前只根据错误类型分支，没有先判断 `Completed/Incompleted/Error`。
   - 风险：请求不完整时 `type` 仍可能是 `NoError`，容易被当成成功请求处理。
 
-- [ ] 修复静态文件路径映射。
+- [o] 修复静态文件路径映射。
   - 当前只支持 `/` 和 `/index`。
   - 需要支持 `/index.html`。
   - 后续再支持更多 `static/` 下的普通文件。
   - 路径中包含 `..` 时应直接返回 `400 Bad Request`，避免目录穿越。
 
-- [ ] 修复 query 解析逻辑。
+- [o] 修复 query 解析逻辑。
   - 位置：`request.hpp` 的 `parse_path`。
   - 问题：`request.path` 当前保存的是带 query 的原始 path，而不是去掉 `?` 后的路径。
   - 问题：query 循环中后续查找分隔符时使用了 `query.find('=', start)`，不符合按 `&` 分割参数的目标。
   - 建议：先把 path 和 query 分离，再单独解析 `a=b&c=d`。
 
-- [ ] 修复 Header value 截取逻辑。
+- [o] 修复 Header value 截取逻辑。
   - 位置：`request.hpp` 中解析 Header 的循环。
   - 问题：`mid` 是当前 header 行内的下标，但代码中用 `raw[mid]` 和 `raw.substr(mid, ...)`，容易错用全局 raw 下标。
   - 建议：Header 行已经放在 `line` 变量中，后续 trim 和 substr 都应基于 `line`。
 
-- [ ] 修复 body 长度判断。
+- [o] 修复 body 长度判断。
   - 当前用 `raw.size() - 2` 作为 body 结束位置。
   - HTTP body 不要求以 `\r\n` 结束。
   - 建议：body 起点为 `header_end + 4`，后续根据 `Content-Length` 精确读取。
 
-- [ ] 修复发送长度计算。
+- [o] 修复发送长度计算。
   - 位置：`main.cpp` 中 `strlen(response)`。
   - 问题：`response` 来自 `std::string`，以后返回二进制文件时可能包含 `\0`。
   - 建议：使用 `r.size()` 作为发送长度。
 
-- [ ] 避免重复关闭 `client_fd`。
+- [o] 避免重复关闭 `client_fd`。
   - 当前 `send` 出错或返回 0 时在循环内 `close(client_fd)`，循环外还会再次 `close(client_fd)`。
   - 建议：统一在单一出口关闭，或者用标志位避免 double close。
 
