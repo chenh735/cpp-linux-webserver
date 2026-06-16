@@ -1,7 +1,7 @@
 ---
 title: 从零实现 C++ Linux WebServer：从最小服务器到 HTTP/1.1 解析
 date: 2026-06-14 00:00:00
-updated: 2026-06-15 00:00:00
+updated: 2026-06-16 00:00:00
 tags:
   - C++
   - Linux
@@ -15,7 +15,7 @@ categories:
 
 这篇文章记录我从零实现一个 Linux C++ WebServer 的过程。项目从最小可运行服务器开始，逐步加入 HTTP/1.1 请求解析、响应构造和静态文件返回能力。
 
-这个阶段的目标不是高性能，也不是完整复刻 TinyWebServer，而是先把基础链路和 HTTP 处理流程真正写明白。
+这个阶段的目标不是高性能，也不是完整复刻 TinyWebServer，而是先把基础链路、HTTP 处理流程和代码结构真正写明白。
 
 <!-- more -->
 
@@ -46,7 +46,7 @@ socket -> bind -> listen -> accept -> recv -> send -> close
 
 固定返回 `Hello World` 之后，下一步是让服务器根据请求内容返回不同结果。
 
-为此我添加了两个方向的内容：
+为此我添加了两个方向的内容。
 
 一是静态页面目录：
 
@@ -79,6 +79,34 @@ http-1.1/
 
 `HttpResponse` 用于根据状态码、Header 和 body 构造完整 HTTP 响应。
 
+## 第三阶段：整理代码结构
+
+随着代码增多，问题不再只是“能不能返回页面”，还包括“代码以后能不能继续扩展”。
+
+这一阶段做了几件结构整理：
+
+- `request.hpp` 和 `response.hpp` 只保留类型声明和函数声明。
+- 解析实现移动到 `request.cpp`。
+- 响应实现和 `status_to_msg` 定义移动到 `response.cpp`。
+- Makefile 只编译 `.cpp` 文件，不再把 `.hpp` 当作编译单元。
+- 添加 `#pragma once`，避免头文件重复包含。
+- 在 `main.cpp` 中提取 `read_file`、`build_html_response`、`send_all`。
+- 将单个客户端连接流程封装为 `handle_client(int client_fd)`。
+
+这样整理后，`main()` 的职责更清楚：
+
+```text
+创建监听 socket -> bind -> listen -> accept -> handle_client -> close
+```
+
+而 `handle_client` 负责单个连接中的：
+
+```text
+recv -> parse_http_request -> build response -> send_all
+```
+
+这一步不是为了追求“高级写法”，而是为了后续抽取 `HttpConnection` 做准备。
+
 ## 这次实现中遇到的问题
 
 ### 1. 调试输出容易污染服务器行为
@@ -104,7 +132,7 @@ HTTP 请求从 socket 读出来时，不一定一次 `recv` 就完整。
 - Incompleted：请求还没读完整。
 - Error：请求格式确实错误。
 
-当前代码已经有 `ParseStatus`，但主流程还需要更明确地使用它。
+当前单次 `recv` 的阻塞版本还没有请求缓冲区，所以请求不完整时暂时按 `400 Bad Request` 返回。后续引入 Buffer 或 `HttpConnection` 后，再改成继续读取。
 
 ### 3. URL 路径和本地文件路径不能直接等同
 
@@ -137,7 +165,7 @@ GET /../README.md HTTP/1.1
 
 ### 4. Header 解析要注意下标来源
 
-解析 Header 时，我把某一行切成了 `line`，但后续取 value 时仍然混用了原始 `raw` 的下标。
+解析 Header 时，如果先把某一行切成 `line`，后续截取 value 就应该继续基于 `line`。
 
 这类 bug 很常见：一旦字符串被切片，后续下标到底是相对于原始字符串，还是相对于当前行，必须统一。
 
@@ -152,28 +180,28 @@ GET /../README.md HTTP/1.1
 
 ## 当前项目状态
 
-当前服务器已经具备雏形：
+当前服务器已经具备阻塞式静态服务器雏形：
 
 - 能监听端口。
 - 能接收 HTTP 请求。
 - 能初步解析 HTTP/1.1 请求。
 - 能构造 HTTP 响应。
-- 已经有静态错误页面。
+- 能返回 `static/index.html`。
+- 能返回 `400 Bad Request` 和 `405 Method Not Allowed` 页面。
+- 已经有 `404NotFound.html` 页面，但未知路径的处理逻辑还需要进一步整理。
+- 已经有最小手动测试脚本 `scripts/manual_test.sh`。
 
-但还不是一个稳定的静态文件服务器。
+目前仍然不是高并发服务器，主要限制是：
 
-接下来需要先修复这些问题：
-
-- 静态文件路径构造。
-- query 解析。
-- Header value 截取。
-- body 长度判断。
-- `ParseStatus` 与 `ParseErrorType` 的处理边界。
-- Makefile 中不应把 `.hpp` 当作编译单元。
+- 一次只处理一个连接。
+- socket 仍然是阻塞模式。
+- 请求只读一次 `recv`。
+- 不支持 keep-alive。
+- 还没有 `epoll`、线程池、定时器和日志系统。
 
 ## 下一步计划
 
-下一步目标是完成一个稳定的阻塞式静态文件服务器：
+下一步目标是把阻塞式版本整理成更稳定的静态文件服务器，并开始为 `HttpConnection` 做准备：
 
 ```text
 GET / HTTP/1.1               -> 200 OK + static/index.html
@@ -183,14 +211,14 @@ POST / HTTP/1.1              -> 405 Method Not Allowed
 错误请求行                    -> 400 Bad Request
 ```
 
-完成这个阶段之后，再参考 TinyWebServer 的路线，进入：
+接下来可以按这个顺序推进：
 
-- `HttpConnection` 连接处理模块。
-- 非阻塞 socket。
-- `epoll`。
-- 定时器。
-- 日志。
-- 线程池。
+- 修正未知静态资源返回 `404 Not Found`。
+- 提取 URL 到本地文件路径的映射函数。
+- 继续拆分 `handle_client` 内部逻辑。
+- 引入请求缓冲区，处理一次 `recv` 读不完整的问题。
+- 抽取 `HttpConnection` 连接处理模块。
+- 再进入非阻塞 socket 和 `epoll`。
 
 目前先不急着做并发。先把请求解析、文件映射和响应构造写稳，后面的 `epoll` 和线程池才有清楚的落点。
 

@@ -6,7 +6,7 @@
 
 ## 当前进度
 
-当前已经从“固定返回 Hello World”的最小服务器，推进到 HTTP/1.1 请求解析和响应构造阶段。
+当前项目已经从固定返回 `Hello World` 的最小服务器，推进到阻塞式 HTTP/1.1 静态页面服务器雏形。
 
 已完成能力：
 
@@ -15,13 +15,13 @@
 - 支持通过命令行指定端口，例如 `./server 8080`。
 - 使用 `SO_REUSEADDR`，便于开发时快速重启。
 - 接收客户端 HTTP 请求。
-- 初步解析 HTTP/1.1 请求行、Header 和可选 body。
+- 初步解析 HTTP/1.1 请求行、Header、query 和可选 body。
 - 使用 `HttpRequest` 保存 method、path、version、header、query 和 body。
 - 使用 `HttpResponse` 构造 HTTP 响应字符串。
-- 已添加 `static/` 静态页面目录。
-- 支持返回 `index.html`、`400BadRequest.html`、`405MethodNotAllowed.html` 等错误页面。
-- 响应头中使用 `Connection: close`。
-- 请求处理结束后关闭客户端连接。
+- 将 `request.hpp/response.hpp` 中的实现迁移到 `.cpp` 文件，降低重复定义风险。
+- 提取 `read_file`、`build_html_response`、`send_all` 和 `handle_client`，让主循环更清晰。
+- 添加 `static/` 静态页面目录。
+- 添加 `scripts/manual_test.sh` 手动测试脚本。
 
 ## 构建与运行
 
@@ -44,6 +44,12 @@ http://127.0.0.1:8080
 curl -v http://127.0.0.1:8080/
 ```
 
+运行手动测试脚本：
+
+```bash
+bash scripts/manual_test.sh
+```
+
 ## 当前目录
 
 ```text
@@ -51,10 +57,13 @@ curl -v http://127.0.0.1:8080/
 ├── main.cpp
 ├── Makefile
 ├── http-1.1/
+│   ├── README.md
 │   ├── request.hpp
 │   ├── request.cpp
 │   ├── response.hpp
 │   └── response.cpp
+├── scripts/
+│   └── manual_test.sh
 ├── static/
 │   ├── index.html
 │   ├── 400BadRequest.html
@@ -69,21 +78,21 @@ curl -v http://127.0.0.1:8080/
 
 - 仍然是阻塞式 `accept/recv/send` 流程。
 - 一次只顺序处理一个连接。
-- 请求读取只调用一次 `recv`，还没有处理完整的请求缓冲。
-- 静态文件路径映射还不完整。
-- 还没有真正支持任意静态文件和 `404 Not Found`。
-- HTTP 解析器仍需要修复 Header、query、body 等边界问题。
+- 请求读取只调用一次 `recv`，还没有请求缓冲区。
+- 请求不完整时当前按 `400 Bad Request` 返回，后续需要配合 Buffer/HttpConnection 继续读取。
+- 当前静态文件映射仍然较简单，主要支持 `/` 和 `/index.html`。
+- 未知静态文件路径当前还需要进一步整理为 `404 Not Found`。
 - 还没有使用非阻塞 socket 和 `epoll`。
 
 ## 下一阶段目标
 
-下一阶段重点是稳定 HTTP/1.1 解析和静态文件返回：
+下一阶段重点是把阻塞式版本整理成更清晰的连接处理模块，为后续 `epoll` 做准备：
 
-- 修复当前 HTTP 解析和响应构造中的 bug。
-- 完成 `/`、`/index.html`、不存在文件、非法请求、非 GET 请求的完整返回逻辑。
-- 把重复的“读取页面 + 构造响应”逻辑提取为辅助函数。
-- 整理 `request.hpp/response.hpp` 的头文件结构，避免后续多源文件链接问题。
-- 调整 Makefile，只编译 `.cpp` 文件，不把 `.hpp` 当作编译单元。
+- 完善静态文件映射，让不存在的资源返回 `404 Not Found`。
+- 把 `handle_client` 进一步拆成更清晰的请求处理函数。
+- 抽取 `HttpConnection` 雏形，管理单个连接的读、解析、写流程。
+- 引入请求缓冲区，处理一次 `recv` 读不完整的情况。
+- 在保持阻塞版本可运行的基础上，再引入非阻塞 socket。
 
 ## 后续路线
 
