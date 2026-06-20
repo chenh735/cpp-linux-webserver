@@ -98,13 +98,11 @@ bool resolve_static_response(const HttpRequest& request, HttpResponse& resp){
         return true;
     }
 
-    // TODO(学习): 这里后续由你实现普通静态文件映射和 404 返回。
     return build_error_response(400, resp);
 }
 
 // 根据解析结果分发到正常响应或错误响应。
 bool build_response_from_request(const ParseResult& result, const HttpRequest& request, HttpResponse& resp){
-    // TODO(学习): 后续引入请求缓冲区后，Incompleted 应继续读取，而不是直接返回 400。
     switch (result.status)
     {
     case ParseStatus::Completed:{
