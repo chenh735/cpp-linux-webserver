@@ -4,11 +4,8 @@
 #include <cctype>
 #include <cerrno>
 #include <cstdlib>
-#include <functional>
 
 namespace {
-
-using handler = std::function<ParseResult(const std::string& raw, HttpRequest& request)>;
 
 void to_lower(std::string& s){
     std::transform(s.begin(), s.end(),s.begin(), [](unsigned char c){
@@ -72,27 +69,32 @@ bool parse_version(const std::string& verison){
     return true;
 }
 
-ParseResult handler_get(const std::string raw, HttpRequest& request){
+bool is_supported_method(const std::string& method){
+    return method == "GET";
+}
+
+ParseResult parse_http_message(const std::string& raw, HttpRequest& request){
     std::size_t header_end = raw.find("\r\n\r\n");
-    if(header_end == std::string::npos || raw.substr(raw.size() - 2) != "\r\n"){
-        return {ParseStatus::Incompleted, ParseErrorType::NoError, "GET 请求不完整"};
+    if(header_end == std::string::npos){
+        return {ParseStatus::Incompleted, ParseErrorType::NoError, "HTTP 请求头不完整"};
     }
 
     std::size_t pos = raw.find("\r\n", 0);
+    if(pos == std::string::npos){
+        return {ParseStatus::Incompleted, ParseErrorType::NoError, "HTTP 请求行不完整"};
+    }
+
     const std::string line = raw.substr(0, pos);
     std::size_t line_pos = line.find(' ');
     if(line_pos == std::string::npos || line_pos + 1 >= line.size() || line[line_pos + 1] != '/'){
-        return {ParseStatus::Error, ParseErrorType::InvalidHeader, "无效请求行1"};
+        return {ParseStatus::Error, ParseErrorType::InvalidRequestLine, "无效请求行1"};
     }
 
     request.method = line.substr(0, line_pos);
-    if(request.method != "GET"){
-        return {ParseStatus::Error, ParseErrorType::UnsupportedMethod, "使用方法不支持"};
-    }
     line_pos++;
     std::size_t line_pos1 = line.find(' ', line_pos);
     if(line_pos1 == std::string::npos || line_pos1 + 1 >= line.size() || line[line_pos1 + 1] != 'H'){
-        return {ParseStatus::Error, ParseErrorType::InvalidHeader, "无效请求行2"};
+        return {ParseStatus::Error, ParseErrorType::InvalidRequestLine, "无效请求行2"};
     }
 
     const std::string path = line.substr(line_pos, line_pos1 - line_pos);
@@ -106,7 +108,12 @@ ParseResult handler_get(const std::string raw, HttpRequest& request){
     }
 
     std::size_t start = pos + 2;
-    for(std::size_t end = raw.find("\r\n", start); end - 1 < header_end; start = end + 2, end = raw.find("\r\n", start)){
+    while(start < header_end){
+        std::size_t end = raw.find("\r\n", start);
+        if(end == std::string::npos || end > header_end){
+            return {ParseStatus::Incompleted, ParseErrorType::NoError, "HTTP 请求头不完整"};
+        }
+
         const std::string line = raw.substr(start, end - start);
         std::size_t mid = line.find(':');
         
@@ -119,12 +126,14 @@ ParseResult handler_get(const std::string raw, HttpRequest& request){
             return {ParseStatus::Error, ParseErrorType::InvalidHeader, "name 中包含特殊字符"};
         }
         mid++;
-        while(mid < end && line[mid] == ' '){
+        while(mid < line.size() && line[mid] == ' '){
             mid++;
         }
         const std::string value = line.substr(mid);
         to_lower(name);
         request.header.emplace(name, value);
+
+        start = end + 2;
     }
     if(request.header.find("host") == request.header.end()){
         return {ParseStatus::Error, ParseErrorType::InvalidHeader, "请求头没有包含 host 信息"};
@@ -136,41 +145,30 @@ ParseResult handler_get(const std::string raw, HttpRequest& request){
         std::string value = it->second;
         errno = 0;
         char* end = nullptr;
-        unsigned long long length = strtoull(value.data(), &end, 0);
+        unsigned long long length = strtoull(value.c_str(), &end, 0);
         if(errno > 0 || *end != '\0' || length > max_length){
-            return {ParseStatus::Error, ParseErrorType::InvalidHeader, "请求头中content-length格式错误"};
+            return {ParseStatus::Error, ParseErrorType::InvalidContentLength, "请求头中content-length格式错误"};
         }
         std::size_t body_start = header_end + 4;
         if(raw.size() - body_start < length){
-            return {ParseStatus::Incompleted, ParseErrorType::NoError, "GET 请求体不完整"};
+            return {ParseStatus::Incompleted, ParseErrorType::NoError, "HTTP 请求体不完整"};
         }
         request.body = raw.substr(body_start, length);
     }
     return {ParseStatus::Completed, ParseErrorType::NoError, "Success"};
 }
 
-std::unordered_map<std::string, handler> handlers = {
-    {"GET", handler_get}
-};
-
 }
 
 ParseResult parse_http_request(const std::string& raw, HttpRequest& request){
-    if(raw.find("\r\n\r\n") == std::string::npos){
-        return {ParseStatus::Incompleted, ParseErrorType::NoError, "请求不完整"};
+    ParseResult result = parse_http_message(raw, request);
+    if(result.status != ParseStatus::Completed){
+        return result;
     }
-    std::string method = "";
-    for(std::size_t i = 0;i < raw.size();i++){
-        if(raw[i] == ' '){
-            method = raw.substr(0, i);
-            break;
-        }else if(i > 6){
-            break;
-        }
+
+    if(!is_supported_method(request.method)){
+        return {ParseStatus::Error, ParseErrorType::UnsupportedMethod, "暂不支持" + request.method + "方法"};
     }
-    auto it = handlers.find(method);
-    if(it == handlers.end()){
-        return {ParseStatus::Error, ParseErrorType::UnsupportedMethod, "暂不支持" + method + "方法"};
-    }
-    return it->second(raw, request);
+
+    return result;
 }
