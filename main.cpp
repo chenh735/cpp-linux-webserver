@@ -61,6 +61,73 @@ bool send_all(int client_fd, const std::string& response){
     return true;
 }
 
+// 根据状态码构造错误页面响应。
+bool build_error_response(int status, HttpResponse& resp){
+    std::string path_prefix = "static/";
+    std::string path = path_prefix + "400BadRequest.html";
+
+    if(status == 404){
+        path = path_prefix + "404NotFound.html";
+    }else if(status == 405){
+        path = path_prefix + "405MethodNotAllowed.html";
+    }
+
+    if(!build_html_response(status, path, resp)){
+        perror((path + "文件不能打开").c_str());
+        return false;
+    }
+
+    return true;
+}
+
+// 根据请求路径构造静态资源响应。
+bool resolve_static_response(const HttpRequest& request, HttpResponse& resp){
+    std::string path_prefix = "static/";
+    std::string request_path = request.path;
+
+    if(request_path == "/"){
+        request_path = "/index";
+    }
+
+    if(request_path == "/index" || request_path == "/index.html"){
+        std::string path = path_prefix + "index.html";
+        if(!build_html_response(200, path, resp)){
+            perror((path + "文件不能打开").c_str());
+            return false;
+        }
+        return true;
+    }
+
+    // TODO(学习): 这里后续由你实现普通静态文件映射和 404 返回。
+    return build_error_response(400, resp);
+}
+
+// 根据解析结果分发到正常响应或错误响应。
+bool build_response_from_request(const ParseResult& result, const HttpRequest& request, HttpResponse& resp){
+    // TODO(学习): 后续引入请求缓冲区后，Incompleted 应继续读取，而不是直接返回 400。
+    switch (result.status)
+    {
+    case ParseStatus::Completed:{
+        if(result.type == ParseErrorType::NoError){
+            return resolve_static_response(request, resp);
+        }
+        return build_error_response(400, resp);
+    }
+    case ParseStatus::Incompleted:{
+        return build_error_response(400, resp);
+    }
+    case ParseStatus::Error:{
+        if(result.type == ParseErrorType::UnsupportedMethod){
+            return build_error_response(405, resp);
+        }
+        return build_error_response(400, resp);
+    }
+    default:{
+        return build_error_response(400, resp);
+    }
+    }
+}
+
 // 处理单个客户端连接的完整请求响应流程。
 void handle_client(int client_fd){
     char buf[1024];
@@ -79,71 +146,12 @@ void handle_client(int client_fd){
     const std::string raw(buf, n);
     HttpRequest request;
     ParseResult result = parse_http_request(raw, request);
-    std::string path_prefix = "static/";
     HttpResponse resp;
-    // 根据解析状态区分成功、请求不完整和解析错误。
-    switch (result.status)
-    {
-    case ParseStatus::Completed:{
-        if(result.type == ParseErrorType::NoError){
-            if(request.path == "/"){
-                request.path = "/index";
-            }
-            if(request.path == "/index" || request.path == "/index.html"){
-                std::string path = path_prefix + "index.html";
-                if(!build_html_response(200, path, resp)){
-                    perror((path + "文件不能打开").c_str());
-                    return;
-                }
-            }else{
-                std::string path = path_prefix + "/400BadRequest.html";
-                if(!build_html_response(400, path, resp)){
-                    perror((path + "文件不能打开").c_str());
-                    return;
-                }
-            }
-        }else{
-            std::string path = path_prefix + "/400BadRequest.html";
-            if(!build_html_response(400, path, resp)){
-                perror((path + "文件不能打开").c_str());
-                return;
-            }
-        }
-        break;
+
+    if(!build_response_from_request(result, request, resp)){
+        return;
     }
-    case ParseStatus::Incompleted:{
-        std::string path = path_prefix + "/400BadRequest.html";
-        if(!build_html_response(400, path, resp)){
-            perror((path + "文件不能打开").c_str());
-            return;
-        }
-        break;
-    }
-    case ParseStatus::Error:{
-        if(result.type == ParseErrorType::UnsupportedMethod){
-            std::string path = path_prefix + "/405MethodNotAllowed.html";
-            if(!build_html_response(405, path, resp)){
-                perror((path + "文件不能打开").c_str());
-                return;
-            }
-        }else{
-            std::string path = path_prefix + "/400BadRequest.html";
-            if(!build_html_response(400, path, resp)){
-                perror((path + "文件不能打开").c_str());
-                return;
-            }
-        }
-        break;
-    }
-    default:{
-        std::string path = path_prefix + "/400BadRequest.html";
-        if(!build_html_response(400, path, resp)){
-            perror((path + "文件不能打开").c_str());
-            return;
-        }
-        break;
-    }
-    }
+
     std::string r = resp.builder();
     send_all(client_fd, r);
 }
