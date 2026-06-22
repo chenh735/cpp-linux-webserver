@@ -135,10 +135,12 @@ void handle_client(int client_fd){
     HttpResponse resp;
 
     if(!read_http_request(client_fd, raw_request, request, result)){
+        close(client_fd);
         return;
     }
 
     if(!build_response_from_request(result, request, resp)){
+        close(client_fd);
         return;
     }
 
