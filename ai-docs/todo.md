@@ -33,17 +33,40 @@
   - 包含 `..` 的路径直接返回 `400 Bad Request`。
   - 文件不存在返回 `404 Not Found`。
 
-- [ ] 让 `handle_client` 的分支更清晰。
+- [x] 让 `handle_client` 的分支更清晰。
   - 当前 `handle_client` 仍然同时负责 `recv`、解析、路由、构造响应和发送。
   - 可以继续提取：
     - `build_response_from_request(result, request, resp)`
     - `build_error_response(status, resp)`
     - `resolve_static_response(request, resp)`
 
-- [ ] 处理请求不完整的情况。
+- [x] 处理请求不完整的情况。
   - 当前只有一次 `recv`，遇到 `ParseStatus::Incompleted` 只能返回 `400 Bad Request`。
-  - 后续需要引入请求缓冲区。
-  - 阻塞版本可以先循环读取到 `\r\n\r\n`，再考虑 body 的 `Content-Length`。
+  - 目标：先在阻塞版本中引入最小请求缓冲区，让服务器可以处理一次 `recv` 没读完整的请求。
+  - 第一版实现边界：
+    - 在 `handle_client` 中使用 `std::string read_buffer` 保存已读数据。
+    - 每次 `recv` 后把新数据追加到 `read_buffer`。
+    - 每次追加后调用 `parse_http_request(read_buffer, request)`。
+    - `ParseStatus::Completed`：停止读取，进入响应构造。
+    - `ParseStatus::Error`：停止读取，构造 `400` 或 `405` 响应。
+    - `ParseStatus::Incompleted`：继续读取，而不是立即返回 `400`。
+  - 需要加的保护：
+    - 设置最大请求大小，例如 `MAX_REQUEST_SIZE = 8192` 或 `1024 * 1024`。
+    - 超过最大请求大小仍未解析完成时，返回 `400 Bad Request` 或后续扩展 `413 Payload Too Large`。
+    - `recv` 返回 `0` 时表示客户端关闭连接，应结束当前连接处理。
+    - `recv` 返回 `-1` 时先按错误处理，后续非阻塞版本再考虑 `EAGAIN/EWOULDBLOCK`。
+  - 阻塞版本推荐顺序：
+    - 第一步：循环读取到 `\r\n\r\n`，让 GET 请求头完整。
+    - 第二步：依赖当前 parser 的 `Content-Length` 判断 body 是否完整。
+    - 第三步：把读取逻辑提取成 `read_http_request(client_fd, raw_request)`，为后续 `HttpConnection` 做准备。
+  - 手动验证：
+    - `printf 'GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n' | nc 127.0.0.1 8080`
+    - 分段发送请求时，服务器不应因为第一次读不完整就返回 `400`。
+  - 暂不处理：
+    - 非阻塞 socket。
+    - `epoll`。
+    - keep-alive。
+    - chunked body。
 
 ## HttpConnection 雏形
 

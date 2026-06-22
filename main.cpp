@@ -61,6 +61,36 @@ bool send_all(int client_fd, const std::string& response){
     return true;
 }
 
+// 阻塞读取一个完整 HTTP 请求，直到解析完成或发生错误。
+bool read_http_request(int client_fd, std::string& raw_request, HttpRequest& request, ParseResult& result){
+    constexpr std::size_t max_request_size = 1024 * 1024;
+    char buf[1024];
+
+    while(true){
+        ssize_t n = recv(client_fd, buf, sizeof(buf), 0);
+        if(n == -1){
+            perror("recv 错误");
+            return false;
+        }
+        if(n == 0){
+            return false;
+        }
+
+        raw_request.append(buf, n);
+        if(raw_request.size() > max_request_size){
+            result = {ParseStatus::Error, ParseErrorType::BodyTooLarge, "请求数据过大"};
+            return true;
+        }
+
+        HttpRequest parsed_request;
+        result = parse_http_request(raw_request, parsed_request);
+        if(result.status == ParseStatus::Completed || result.status == ParseStatus::Error){
+            request = parsed_request;
+            return true;
+        }
+    }
+}
+
 // 根据状态码构造错误页面响应。
 bool build_error_response(int status, HttpResponse& resp){
     std::string path_prefix = "static/";
@@ -128,23 +158,14 @@ bool build_response_from_request(const ParseResult& result, const HttpRequest& r
 
 // 处理单个客户端连接的完整请求响应流程。
 void handle_client(int client_fd){
-    char buf[1024];
-    ssize_t n = recv(client_fd, buf, sizeof(buf) - 1, 0);
-    if(n == -1){
-        perror("revc 错误");
-        return;
-    }
-    if(n == 0){
-        return;
-    }
-    if(n > 0){
-        buf[n] = '\0';
-    }
-
-    const std::string raw(buf, n);
+    std::string raw_request;
     HttpRequest request;
-    ParseResult result = parse_http_request(raw, request);
+    ParseResult result;
     HttpResponse resp;
+
+    if(!read_http_request(client_fd, raw_request, request, result)){
+        return;
+    }
 
     if(!build_response_from_request(result, request, resp)){
         return;
