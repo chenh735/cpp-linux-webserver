@@ -11,89 +11,78 @@
 - [x] 将 `request.hpp`、`response.hpp` 中的实现迁移到 `.cpp`。
 - [x] Makefile 只编译 `.cpp` 文件。
 - [x] 添加 `#pragma once`，避免头文件重复包含。
-- [x] 提取 `read_file(path)`。
-- [x] 提取 `build_html_response(status, file_path, resp)`。
-- [x] 提取 `send_all(client_fd, response)`。
-- [x] 提取 `handle_client(int client_fd)`，让主循环只保留 `accept -> handle_client -> close`。
 - [x] 引入阻塞式请求缓冲区，处理一次 `recv` 读不完整的情况。
 - [x] 拆分 `server/`、`connection/` 和 `util/` 模块。
 - [x] 添加 `scripts/manual_test.sh` 手动测试脚本。
 
-这一阶段的重点已经从“先跑起来”转为“把连接处理边界理清楚”。
+当前代码结构：
 
-## 下一步优先修复
+```text
+main.cpp              解析端口，调用 run_server
+server/               监听 socket 和 accept 主循环
+connection/           单个客户端连接处理
+http-1.1/             HTTP 请求解析和响应构造
+util/                 文件读取、socket 发送等通用函数
+static/               静态 HTML 页面
+```
 
-- [ ] 修正未知静态文件的返回逻辑。
-  - 当前：非 `/`、`/index`、`/index.html` 的成功 GET 请求仍可能走 `400 Bad Request`。
-  - 期望：请求路径格式合法但文件不存在时，返回 `404 Not Found` 和 `static/404NotFound.html`。
-  - 思路：先判断 URL path 是否非法，再判断本地文件是否存在。
+## 下一步优先任务
 
-- [ ] 整理 URL 路径到本地文件路径的映射函数。
-  - 可提取：`map_url_to_static_path(request.path, file_path)`。
-  - `/` 映射到 `static/index.html`。
-  - `/index.html` 映射到 `static/index.html`。
-  - 包含 `..` 的路径直接返回 `400 Bad Request`。
-  - 文件不存在返回 `404 Not Found`。
-
-- [x] 让 `handle_client` 的分支更清晰。
-  - 已提取：
-    - `build_response_from_request(result, request, resp)`。
-    - `build_error_response(status, resp)`。
-    - `resolve_static_response(request, resp)`。
-  - 当前这些函数已经移动到 `connection/http_connection.cpp`。
-
-- [x] 处理请求不完整的情况。
-  - 已实现 `read_http_request(client_fd, raw_request, request, result)`。
-  - 当前逻辑：
-    - 使用 `std::string raw_request` 保存已读数据。
-    - 每次 `recv` 后把新数据追加到 `raw_request`。
-    - 每次追加后调用 `parse_http_request(raw_request, request)`。
-    - `ParseStatus::Completed`：停止读取，进入响应构造。
-    - `ParseStatus::Error`：停止读取，构造 `400` 或 `405` 响应。
-    - `ParseStatus::Incompleted`：继续读取，而不是立即返回 `400`。
-  - 已加入最大请求大小限制：`1024 * 1024`。
-  - 手动验证：
-    - `printf 'GET / HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n' | nc 127.0.0.1 8080`
-    - 分段发送请求时，服务器不应因为第一次读不完整就返回 `400`。
-  - 暂不处理：
-    - 非阻塞 socket。
-    - `epoll`。
-    - keep-alive。
-    - chunked body。
-
-## HttpConnection 雏形
-
-- [x] 新增 `HttpConnection` 模块。
-  - 当前是函数集合形式，还不是类。
-  - 已把单个连接处理逻辑从 `main.cpp` 移动到 `connection/http_connection.cpp`。
-  - 当前职责：
-    - 读取请求数据。
-    - 调用 HTTP 解析器。
-    - 构造并发送响应。
-
-- [x] 抽取 `server` 和 `util` 模块。
-  - `server/`：负责监听 socket、`bind/listen/accept` 主循环。
-  - `connection/`：负责单个客户端连接处理。
-  - `util/`：负责文件读取和 socket 发送等通用工具函数。
+- [ ] 暂不扩展静态文件映射。
+  - 当前阶段先保留现有行为：主要支持 `/`、`/index` 和 `/index.html`。
+  - 未知静态文件返回逻辑暂不继续优化。
+  - URL 到本地文件路径的通用映射函数暂不提取。
+  - 原因：当前学习重点转向连接处理结构，为后续非阻塞 socket 和 `epoll` 做准备。
 
 - [ ] 明确 fd 关闭责任。
   - 当前：`server/server.cpp` 在 `handle_client(client_fd)` 后统一 `close(client_fd)`。
-  - 后续如果把 `connection/` 改成 `HttpConnection` 类，需要明确由谁负责关闭连接，避免 double close。
+  - 当前约定是可用的，但后续类化时需要重新确认。
+  - 下一步要写清楚：
+    - `server` 负责 accept 和最终 close。
+    - `connection` 只处理读写，不主动 close。
+    - 或者 `HttpConnection` 析构时负责 close。
+  - 二选一即可，不要两个模块同时 close。
 
 - [ ] 将 `connection/` 从函数集合演进为 `HttpConnection` 类。
-  - 可以先保存：
-    - `client_fd`
-    - `read_buffer`
-    - `HttpRequest`
-    - `HttpResponse`
-  - 先让类在阻塞模型下工作，等行为稳定后，再切换到非阻塞 socket 和 `epoll`。
+  - 当前：`connection/http_connection.cpp` 还是一组函数。
+  - 目标：先做阻塞式 `HttpConnection`，不引入非阻塞和 `epoll`。
+  - 类中可以保存：
+    - `int client_fd`
+    - `std::string read_buffer`
+    - `HttpRequest request`
+    - `HttpResponse response`
+    - `ParseResult parse_result`
+  - 初始接口可以设计为：
+    - `bool read_request()`
+    - `bool build_response()`
+    - `bool send_response()`
+    - `void handle()`
+  - 完成后，`server/server.cpp` 中可以从 `handle_client(client_fd)` 变为创建 `HttpConnection conn(client_fd); conn.handle();`。
+
+## 当前不急着做
+
+- [ ] 非阻塞 socket。
+  - 等阻塞式 `HttpConnection` 类稳定后再做。
+  - 到时需要处理 `EAGAIN/EWOULDBLOCK`。
+
+- [ ] `epoll`。
+  - 先使用 LT 模式。
+  - 不要和线程池同时引入。
+
+- [ ] keep-alive。
+  - 当前响应头仍然使用 `Connection: close`。
+  - 等连接状态对象稳定后再考虑复用连接。
+
+- [ ] chunked body。
+  - 当前先依赖 `Content-Length`。
+  - 学习阶段可以先不实现。
 
 ## 后续路线
 
 参考 TinyWebServer 的学习点，后续建议按这个顺序推进：
 
 - [ ] 第一阶段：HTTP 解析和静态资源返回稳定。
-- [ ] 第二阶段：抽取连接处理模块，形成 `HttpConnection` 雏形。
+- [ ] 第二阶段：抽取连接处理模块，形成 `HttpConnection` 类。
 - [ ] 第三阶段：使用非阻塞 socket。
 - [ ] 第四阶段：引入 `epoll`，先使用 LT 模式。
 - [ ] 第五阶段：增加定时器，关闭空闲连接。
