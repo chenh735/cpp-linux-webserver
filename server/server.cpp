@@ -48,7 +48,6 @@ int run_server(long port){
         }
 
         handle_client(client_fd);
-        close(client_fd);
     }
 
     close(fd);

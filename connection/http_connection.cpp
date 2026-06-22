@@ -4,6 +4,7 @@
 #include <string>
 #include <unordered_map>
 #include <sys/socket.h>
+#include <unistd.h>
 
 #include "../http-1.1/request.hpp"
 #include "../http-1.1/response.hpp"
@@ -143,4 +144,5 @@ void handle_client(int client_fd){
 
     std::string r = resp.builder();
     send_all(client_fd, r);
+    close(client_fd);
 }
