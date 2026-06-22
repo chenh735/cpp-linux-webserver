@@ -12,7 +12,7 @@
 
 - 创建 TCP 监听 socket。
 - 绑定本地端口并监听连接。
-- 支持通过命令行指定端口，例如 `./server 8080`。
+- 支持通过命令行指定端口，例如 `./bin/server 8080`。
 - 使用 `SO_REUSEADDR`，便于开发时快速重启。
 - 接收客户端 HTTP 请求。
 - 初步解析 HTTP/1.1 请求行、Header、query 和可选 body。
@@ -29,7 +29,7 @@
 
 ```bash
 make build
-./server 8080
+./bin/server 8080
 ```
 
 访问：
@@ -56,12 +56,18 @@ bash scripts/manual_test.sh
 .
 ├── main.cpp
 ├── Makefile
+├── connection/
+│   ├── http_connection.hpp
+│   └── http_connection.cpp
 ├── http-1.1/
 │   ├── README.md
 │   ├── request.hpp
 │   ├── request.cpp
 │   ├── response.hpp
 │   └── response.cpp
+├── server/
+│   ├── server.hpp
+│   └── server.cpp
 ├── scripts/
 │   └── manual_test.sh
 ├── static/
@@ -69,6 +75,11 @@ bash scripts/manual_test.sh
 │   ├── 400BadRequest.html
 │   ├── 404NotFound.html
 │   └── 405MethodNotAllowed.html
+├── util/
+│   ├── file.hpp
+│   ├── file.cpp
+│   ├── socket.hpp
+│   └── socket.cpp
 └── ai-docs/
 ```
 
@@ -78,8 +89,8 @@ bash scripts/manual_test.sh
 
 - 仍然是阻塞式 `accept/recv/send` 流程。
 - 一次只顺序处理一个连接。
-- 请求读取只调用一次 `recv`，还没有请求缓冲区。
-- 请求不完整时当前按 `400 Bad Request` 返回，后续需要配合 Buffer/HttpConnection 继续读取。
+- 已经有阻塞式请求读取缓冲，但还没有抽象成连接状态对象。
+- 还没有处理非阻塞模式下的 `EAGAIN/EWOULDBLOCK`。
 - 当前静态文件映射仍然较简单，主要支持 `/` 和 `/index.html`。
 - 未知静态文件路径当前还需要进一步整理为 `404 Not Found`。
 - 还没有使用非阻塞 socket 和 `epoll`。

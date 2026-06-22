@@ -1,7 +1,7 @@
 ---
 title: 从零实现 C++ Linux WebServer：从最小服务器到 HTTP/1.1 解析
 date: 2026-06-14 00:00:00
-updated: 2026-06-16 00:00:00
+updated: 2026-06-22 00:00:00
 tags:
   - C++
   - Linux
@@ -24,7 +24,7 @@ categories:
 最开始的目标很简单：
 
 ```text
-启动服务器：./server 8080
+启动服务器：./bin/server 8080
 浏览器访问：http://127.0.0.1:8080
 返回内容：Hello World
 ```
@@ -92,20 +92,35 @@ http-1.1/
 - 添加 `#pragma once`，避免头文件重复包含。
 - 在 `main.cpp` 中提取 `read_file`、`build_html_response`、`send_all`。
 - 将单个客户端连接流程封装为 `handle_client(int client_fd)`。
+- 引入阻塞式请求缓冲区，避免一次 `recv` 读不完整时直接返回 `400 Bad Request`。
+- 将项目拆成 `server/`、`connection/` 和 `util/` 三个模块。
 
 这样整理后，`main()` 的职责更清楚：
 
 ```text
-创建监听 socket -> bind -> listen -> accept -> handle_client -> close
+解析端口 -> run_server(port)
 ```
 
-而 `handle_client` 负责单个连接中的：
+`server/` 负责服务器主流程：
 
 ```text
-recv -> parse_http_request -> build response -> send_all
+socket -> bind -> listen -> accept -> handle_client -> close
 ```
 
-这一步不是为了追求“高级写法”，而是为了后续抽取 `HttpConnection` 做准备。
+`connection/` 负责单个连接中的：
+
+```text
+read_http_request -> parse_http_request -> build response -> send_all
+```
+
+`util/` 暂时放通用工具函数：
+
+```text
+read_file
+send_all
+```
+
+这一步不是为了追求“高级写法”，而是为了让每个文件的职责更清楚。后续如果继续引入非阻塞 socket 和 `epoll`，`main.cpp` 不需要再继续膨胀。
 
 ## 这次实现中遇到的问题
 
@@ -132,7 +147,9 @@ HTTP 请求从 socket 读出来时，不一定一次 `recv` 就完整。
 - Incompleted：请求还没读完整。
 - Error：请求格式确实错误。
 
-当前单次 `recv` 的阻塞版本还没有请求缓冲区，所以请求不完整时暂时按 `400 Bad Request` 返回。后续引入 Buffer 或 `HttpConnection` 后，再改成继续读取。
+当前阻塞版本已经加入最小请求缓冲区：每次 `recv` 后把数据追加到 `raw_request`，再调用 `parse_http_request`。如果解析结果是 `Incompleted`，就继续读取；如果是 `Completed` 或 `Error`，再进入响应构造。
+
+这一版仍然是阻塞模型，还没有处理非阻塞 socket 下的 `EAGAIN/EWOULDBLOCK`，也没有 keep-alive。
 
 ### 3. URL 路径和本地文件路径不能直接等同
 
@@ -186,22 +203,24 @@ GET /../README.md HTTP/1.1
 - 能接收 HTTP 请求。
 - 能初步解析 HTTP/1.1 请求。
 - 能构造 HTTP 响应。
+- 能在阻塞模式下循环读取不完整请求。
 - 能返回 `static/index.html`。
 - 能返回 `400 Bad Request` 和 `405 Method Not Allowed` 页面。
 - 已经有 `404NotFound.html` 页面，但未知路径的处理逻辑还需要进一步整理。
 - 已经有最小手动测试脚本 `scripts/manual_test.sh`。
+- `main.cpp` 已经简化为端口解析和 `run_server(port)` 调用。
 
 目前仍然不是高并发服务器，主要限制是：
 
 - 一次只处理一个连接。
 - socket 仍然是阻塞模式。
-- 请求只读一次 `recv`。
+- 连接处理目前还是函数集合，还没有真正封装成 `HttpConnection` 类。
 - 不支持 keep-alive。
 - 还没有 `epoll`、线程池、定时器和日志系统。
 
 ## 下一步计划
 
-下一步目标是把阻塞式版本整理成更稳定的静态文件服务器，并开始为 `HttpConnection` 做准备：
+下一步目标是把阻塞式版本整理成更稳定的静态文件服务器，并逐步把 `connection/` 演进成真正的 `HttpConnection`：
 
 ```text
 GET / HTTP/1.1               -> 200 OK + static/index.html
@@ -215,9 +234,8 @@ POST / HTTP/1.1              -> 405 Method Not Allowed
 
 - 修正未知静态资源返回 `404 Not Found`。
 - 提取 URL 到本地文件路径的映射函数。
-- 继续拆分 `handle_client` 内部逻辑。
-- 引入请求缓冲区，处理一次 `recv` 读不完整的问题。
-- 抽取 `HttpConnection` 连接处理模块。
+- 明确 `client_fd` 的关闭责任，避免后续模块变多后出现 double close。
+- 把 `connection/` 中的函数集合逐步整理成 `HttpConnection` 类。
 - 再进入非阻塞 socket 和 `epoll`。
 
 目前先不急着做并发。先把请求解析、文件映射和响应构造写稳，后面的 `epoll` 和线程池才有清楚的落点。

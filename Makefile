@@ -1,12 +1,13 @@
 CXX := g++
 CXXFLAGS := -Wall -Wextra -std=c++17 -g
-TARGET := server
-SRC := main.cpp http-1.1/request.cpp http-1.1/response.cpp
+TARGET := bin/server
+SRC := main.cpp server/server.cpp connection/http_connection.cpp util/file.cpp util/socket.cpp http-1.1/request.cpp http-1.1/response.cpp
 
 clean:
-	rm -f $(TARGET)
+	rm -rf bin
 
 build:
+	mkdir -p bin
 	$(CXX) $(CXXFLAGS) $(SRC) -o $(TARGET)
 
 run: build
